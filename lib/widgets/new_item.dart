@@ -1,11 +1,15 @@
+import 'dart:convert';
+
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shopping_list_app/models/category.dart';
 import 'package:shopping_list_app/data/categories.dart';
 import 'package:shopping_list_app/models/grocery_item.dart';
+import 'package:http/http.dart' as http;
 
 class NewItem extends StatefulWidget {
-  const NewItem({super.key,  this.groceryItem});
+  const NewItem({Key? key, this.groceryItem});
 
   final GroceryItem? groceryItem;
 
@@ -18,24 +22,60 @@ class _NewItemState extends State<NewItem> {
   late String _enteredName;
   late int _enteredQuantity;
   late Category _selectCategory;
+  var _isSending = false;
 
   @override
   void initState() {
     super.initState();
     _enteredName = widget.groceryItem?.name ?? '';
     _enteredQuantity = widget.groceryItem?.quantity ?? 1;
-    _selectCategory = widget.groceryItem?.category ?? categories[Categories.vegetables]!;
+    _selectCategory =
+        widget.groceryItem?.category ?? categories[Categories.vegetables]!;
   }
 
-  void _saveItem() {
+  void _saveItem() async {
     if (_formKey.currentState!.validate()) {
       _formKey.currentState!.save();
-      Navigator.of(context).pop(GroceryItem(
-          id: widget.groceryItem?.id ?? DateTime.now().toString(),
-          name: _enteredName,
-          quantity: _enteredQuantity,
-          category: _selectCategory
-      ));
+      setState(() {
+        _isSending = true;
+      });
+
+      final baseUrl = 'heroic-psyche-399016-default-rtdb.europe-west1.firebasedatabase.app';
+      final endpoint = widget.groceryItem != null
+          ? 'shopping-list/${widget.groceryItem!.id}.json'
+          : 'shopping-list.json';
+      final url = Uri.https(baseUrl, endpoint);
+
+      final body = json.encode({
+        'name': _enteredName,
+        'quantity': _enteredQuantity,
+        'category': _selectCategory.title
+      });
+
+      try {
+        final response = widget.groceryItem != null
+            ? await http.put(url, headers: {'Content-Type': 'application/json'}, body: body)
+            : await http.post(url, headers: {'Content-Type': 'application/json'}, body: body);
+
+        if (response.statusCode >= 200) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(widget.groceryItem != null ? 'Item updated successfully' : 'Item added successfully')),
+          );
+          Navigator.of(context).pop(true);
+        } else {
+          throw Exception('Failed to ${widget.groceryItem != null ? 'update' : 'add'} item');
+        }
+      } catch (error) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $error')),
+        );
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isSending = false;
+          });
+        }
+      }
     }
   }
 
@@ -84,7 +124,7 @@ class _NewItemState extends State<NewItem> {
                         FilteringTextInputFormatter.digitsOnly
                       ],
                       decoration: const InputDecoration(
-                        label: Text("Quantity"),
+                        labelText: "Quantity",
                       ),
                       initialValue: _enteredQuantity.toString(),
                       validator: (value) {
@@ -109,26 +149,26 @@ class _NewItemState extends State<NewItem> {
                     width: 8,
                   ),
                   Expanded(
-                    child: DropdownButtonFormField(
+                    child: DropdownButtonFormField<Category>(
                       value: _selectCategory,
-                      items: [
-                        for (final category in categories.entries)
-                          DropdownMenuItem(
-                              value: category.value,
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 16,
-                                    height: 16,
-                                    color: category.value.color,
-                                  ),
-                                  const SizedBox(
-                                    width: 6,
-                                  ),
-                                  Text(category.value.title)
-                                ],
-                              ))
-                      ],
+                      items: categories.entries.map((entry) {
+                        return DropdownMenuItem<Category>(
+                          value: entry.value,
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 16,
+                                height: 16,
+                                color: entry.value.color,
+                              ),
+                              const SizedBox(
+                                width: 6,
+                              ),
+                              Text(entry.value.title)
+                            ],
+                          ),
+                        );
+                      }).toList(),
                       onChanged: (value) {
                         setState(() {
                           _selectCategory = value!;
@@ -144,18 +184,30 @@ class _NewItemState extends State<NewItem> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  TextButton(onPressed: () {
-                    _formKey.currentState!.reset();
-                  }, child: const Text('Reset')),
+                  TextButton(
+                    onPressed: _isSending
+                        ? null
+                        : () {
+                            _formKey.currentState!.reset();
+                          },
+                    child: const Text('Reset'),
+                  ),
                   const SizedBox(
                     width: 10,
                   ),
                   ElevatedButton(
-                      onPressed: _saveItem,
-                      child: Text(widget.groceryItem == null ? 'Add Item' : 'Save Changes')
-                  )
+                      onPressed: _isSending ? null : _saveItem,
+                      child: _isSending
+                          ? const SizedBox(
+                              height: 16,
+                              width: 16,
+                              child: CircularProgressIndicator(),
+                            )
+                          : Text(widget.groceryItem == null
+                              ? 'Add Item'
+                              : 'Save Changes')),
                 ],
-              )
+              ),
             ],
           ),
         ),

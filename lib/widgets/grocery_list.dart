@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import '../data/categories.dart';
 import '../models/grocery_item.dart';
-import '../data/dummy_items.dart';
 import '../widgets/new_item.dart';
+import 'package:http/http.dart' as http;
 
 class GroceryList extends StatefulWidget {
   const GroceryList({super.key});
@@ -11,34 +14,109 @@ class GroceryList extends StatefulWidget {
 }
 
 class _GroceryListState extends State<GroceryList> {
-  final List<GroceryItem> _groceryItems = [...groceryItems];
+  List<GroceryItem> _groceryItems = [];
+  var _isLoading = true;
+  var _error;
 
-  void _removeItem(GroceryItem item) {
+  void _removeItem(GroceryItem item) async {
+    var index = _groceryItems.indexOf(item);
     setState(() {
       _groceryItems.remove(item);
     });
+
+    final url = Uri.https(
+        'heroic-psyche-399016-default-rtdb.europe-west1.firebasedatabase.app', 'shopping-list/${item.id}.json');
+
+    var response = await http.delete(url);
+
+    if(response.statusCode >= 400){
+      setState(() {
+        _groceryItems.insert(index, item);
+      });
+    }
+
   }
 
   void _editItem(GroceryItem item) async {
-    final editedItem = await Navigator.push<GroceryItem>(
+    final isEdited = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (ctx) => NewItem(groceryItem: item,),
+        builder: (ctx) => NewItem(groceryItem: item),
       ),
     );
-    if (editedItem != null) {
+
+    if (isEdited == true) {
       setState(() {
-        final index = _groceryItems.indexWhere((element) => element.id == item.id);
-        if (index != -1) {
-          _groceryItems[index] = editedItem;
-        }
+        _loadItems();
       });
     }
+  }
+
+  void _loadItems() async {
+    final url = Uri.https(
+        'heroic-psyche-399016-default-rtdb.europe-west1.firebasedatabase.app', 'shopping-list.json');
+
+    try {
+      final response = await http.get(url);
+
+      if(response.statusCode == 404){
+        setState(() {
+          _error = "Failed to fetch data. Please try again later";
+        });
+      }
+
+      if(response.body == 'null'){
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic>? listData = json.decode(response.body);
+
+        if (listData != null) {
+          final List<GroceryItem> loadedItems = [];
+          for (final item in listData.entries) {
+            final category = categories.entries.firstWhere(
+                    (element) => element.value.title == item.value['category']
+            ).value;
+            loadedItems.add(GroceryItem(
+                id: item.key,
+                name: item.value['name'],
+                quantity: item.value['quantity'],
+                category: category
+            ));
+          }
+
+          setState(() {
+            _groceryItems = loadedItems;
+            _isLoading = false;
+          });
+        }
+      } else {
+        throw Exception('Failed to load items');
+      }
+    } catch (error) {
+      _error = "Something Went Wrong Please Try Again Late";
+      print('Error loading items: $error');
+      // You might want to show an error message to the user here
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadItems();
   }
 
   @override
   Widget build(BuildContext context) {
     Widget content = const Center(child: Text("No Items Added Yet"));
+
+    if(_isLoading){
+      content = const Center(child: CircularProgressIndicator(),);
+    }
 
     if (_groceryItems.isNotEmpty) {
       content = ListView.builder(
@@ -73,20 +151,24 @@ class _GroceryListState extends State<GroceryList> {
       );
     }
 
+    if(_error != null) {
+      content = _error;
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Your Groceries'),
         actions: [
           IconButton(
             onPressed: () async {
-              final newItem = await Navigator.push<GroceryItem>(
+              final result = await Navigator.push<bool>(
                 context,
                 MaterialPageRoute(builder: (ctx) => const NewItem()),
               );
-              if (newItem != null) {
-                setState(() {
-                  _groceryItems.add(newItem);
-                });
+
+              if (result == true) {
+                // If an item was added, reload the data
+                _loadItems();
               }
             },
             icon: const Icon(Icons.add),
@@ -96,4 +178,6 @@ class _GroceryListState extends State<GroceryList> {
       body: content,
     );
   }
+
+
 }
