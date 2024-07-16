@@ -15,8 +15,14 @@ class GroceryList extends StatefulWidget {
 
 class _GroceryListState extends State<GroceryList> {
   List<GroceryItem> _groceryItems = [];
-  var _isLoading = true;
+  late Future<List<GroceryItem>> _loadedItems;
   var _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadedItems = _loadItems();
+  }
 
   void _removeItem(GroceryItem item) async {
     var index = _groceryItems.indexOf(item);
@@ -29,12 +35,11 @@ class _GroceryListState extends State<GroceryList> {
 
     var response = await http.delete(url);
 
-    if(response.statusCode >= 400){
+    if (response.statusCode >= 400) {
       setState(() {
         _groceryItems.insert(index, item);
       });
     }
-
   }
 
   void _editItem(GroceryItem item) async {
@@ -47,29 +52,27 @@ class _GroceryListState extends State<GroceryList> {
 
     if (isEdited == true) {
       setState(() {
-        _loadItems();
+        _loadedItems = _loadItems();
       });
     }
   }
 
-  void _loadItems() async {
+  Future<List<GroceryItem>> _loadItems() async {
     final url = Uri.https(
         'heroic-psyche-399016-default-rtdb.europe-west1.firebasedatabase.app', 'shopping-list.json');
 
     try {
       final response = await http.get(url);
 
-      if(response.statusCode == 404){
+      if (response.statusCode == 404) {
         setState(() {
           _error = "Failed to fetch data. Please try again later";
         });
+        return [];
       }
 
-      if(response.body == 'null'){
-        setState(() {
-          _isLoading = false;
-        });
-        return;
+      if (response.body == 'null') {
+        return [];
       }
 
       if (response.statusCode == 200) {
@@ -91,70 +94,24 @@ class _GroceryListState extends State<GroceryList> {
 
           setState(() {
             _groceryItems = loadedItems;
-            _isLoading = false;
           });
+          return loadedItems;
+        } else {
+          return [];
         }
       } else {
         throw Exception('Failed to load items');
       }
     } catch (error) {
-      _error = "Something Went Wrong Please Try Again Late";
-      print('Error loading items: $error');
-      // You might want to show an error message to the user here
+      setState(() {
+        _error = "An error occurred: $error";
+      });
+      return [];
     }
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _loadItems();
   }
 
   @override
   Widget build(BuildContext context) {
-    Widget content = const Center(child: Text("No Items Added Yet"));
-
-    if(_isLoading){
-      content = const Center(child: CircularProgressIndicator(),);
-    }
-
-    if (_groceryItems.isNotEmpty) {
-      content = ListView.builder(
-        itemCount: _groceryItems.length,
-        itemBuilder: (ctx, index) => Dismissible(
-          key: ValueKey(_groceryItems[index].id),
-          onDismissed: (direction) {
-            _removeItem(_groceryItems[index]);
-          },
-          child: ListTile(
-            title: Text(_groceryItems[index].name),
-            leading: Container(
-              width: 24,
-              height: 24,
-              color: _groceryItems[index].category.color,
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _groceryItems[index].quantity.toString(),
-                  style: const TextStyle(fontSize: 16),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.edit),
-                  onPressed: () => _editItem(_groceryItems[index]),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    if(_error != null) {
-      content = _error;
-    }
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Your Groceries'),
@@ -167,17 +124,65 @@ class _GroceryListState extends State<GroceryList> {
               );
 
               if (result == true) {
-                // If an item was added, reload the data
-                _loadItems();
+                setState(() {
+                  _loadedItems = _loadItems();
+                });
               }
             },
             icon: const Icon(Icons.add),
           ),
         ],
       ),
-      body: content,
+      body: FutureBuilder<List<GroceryItem>>(
+        future: _loadedItems,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snapshot.hasError) {
+            return Center(child: Text(snapshot.error.toString()));
+          }
+
+          if (snapshot.hasData && snapshot.data!.isEmpty) {
+            return const Center(child: Text("No items added yet."));
+          }
+
+          return ListView.builder(
+            itemCount: snapshot.data?.length ?? 0,
+            itemBuilder: (ctx, index) {
+              final item = snapshot.data![index];
+              return Dismissible(
+                key: ValueKey(item.id),
+                onDismissed: (direction) {
+                  _removeItem(item);
+                },
+                child: ListTile(
+                  title: Text(item.name),
+                  leading: Container(
+                    width: 24,
+                    height: 24,
+                    color: item.category.color,
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        item.quantity.toString(),
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.edit),
+                        onPressed: () => _editItem(item),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
-
-
 }
